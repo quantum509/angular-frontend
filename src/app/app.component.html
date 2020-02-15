@@ -1,0 +1,15 @@
+<div *ngIf="user">
+  <button (click)="logout()">Logout</button>
+  <div> {{user.id_token}} </div>
+  <div> {{user.session_state}} </div>
+  <div> {{user.access_token}} </div>
+  <div> {{user.token_type}} </div>
+  <div> {{user.scope}} </div>
+  <div> {{user.profile}} </div>
+  <div> {{user.expires_at}} </div>
+  <div> {{user.state}} </div>
+</div>
+
+<div *ngIf="!user">
+  <button (click)="login()">Login</button>
+</div>
