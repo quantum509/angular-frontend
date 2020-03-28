@@ -1,14 +1,17 @@
 import { UserManager, User } from "oidc-client";
 import { Subscription, Subject } from "rxjs";
+import * as querystring from 'querystring';
 
 import { Mutex } from "async-mutex";
 
 import { LoginConfig } from "../models/login-config.model";
 
-import { AuthResponse } from "../models/role-authorizations.model";
-import { ApiService } from "../services/api.service";  // Used to getAuthorizations
 import { ModeService } from "../services/mode.service";
 import { Capture } from "../lib/capture/capture.lib";
+
+export interface AuthResponse {
+    authList: any[];
+}
 
 export class LoginService {
   private className: string = "LoginService";
@@ -80,6 +83,7 @@ export class LoginService {
     }
   }
 
+  
   private processMode(allowredirect: boolean = false, stateinfo?: string | undefined) {
     return this.doSafeUserAction(this.publicLock, () => {
       switch (this.modeService.mode) {
@@ -94,8 +98,9 @@ export class LoginService {
       }
     }).catch(() => { });
   }
-  public subscribe(subscriber: (value: User) => void): Subscription { return this.userLoadedEvents.subscribe(subscriber); }
-  public subscribeAll(subscriber: (value: User | Error) => void): Subscription { return this.userEvents.subscribe(subscriber); }
+
+  // public subscribe(subscriber: (value: User) => void): Subscription { return this.userLoadedEvents.subscribe(subscriber); }
+  // public subscribeAll(subscriber: (value: User | Error) => void): Subscription { return this.userEvents.subscribe(subscriber); }
 
   private clearAuth(): Promise<void> {
     return this.doSafeUserAction(this.privateLock, () => {
@@ -106,21 +111,6 @@ export class LoginService {
         this.userEvents.next(undefined);
       }
     });
-  }
-
-  public async getAuthorizations(): Promise<string[]> {
-    if (typeof this.auths === "undefined")
-      this.auths = await this.getCurrentUser()
-        .then(async () => ApiService.get(this.loginConfig.BANNER_URL, "roleAuthorizations", this.headers))
-        .then((auths: AuthResponse) => auths.authList);
-
-    return this.auths;
-  }
-
-  public async canViewAs(): Promise<boolean> {
-    if (!this.auths)
-      this.auths = await this.getAuthorizations();
-    return this.auths && this.auths.indexOf("viewAs") >= 0;
   }
 
   public async getCurrentUser(): Promise<User> {
