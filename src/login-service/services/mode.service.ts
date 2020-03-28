@@ -1,5 +1,4 @@
-const querystring = require("querystring"); // see https://nodejs.org/api/querystring.html#querystring_querystring_parse_str_sep_eq_options
-
+import * as querystring from 'querystring'; // see https://nodejs.org/api/querystring.html#querystring_querystring_parse_str_sep_eq_options
 export class ModeService {
     private initial_href: string; // original href before angular strips query and rewrites fragment
     private query_string: string; // query string from original href

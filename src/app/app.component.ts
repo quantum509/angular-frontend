@@ -13,7 +13,7 @@ export class AppComponent {
     private loginService: LoginService
   ) {
     this.loginService
-      .initialize(new LoginConfig(environment.loginConfig))
+      .initialize(environment.loginConfig)
       .then(() => this.loginService.getCurrentUser())
       .then((user: User) => this.user = user)
       .catch(() => console.error('Silent Login Failed'));

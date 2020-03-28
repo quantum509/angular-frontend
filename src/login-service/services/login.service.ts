@@ -4,7 +4,9 @@ import { Subscription, Subject } from "rxjs";
 import { Mutex } from "async-mutex";
 
 import { ModeService } from "../services/mode.service";
+import { Injectable } from "@angular/core";
 
+@Injectable()
 export class LoginService {
   static get DefaultUserManagerSettings(): UserManagerSettings {
     return {
