@@ -20,7 +20,7 @@
     "@angular/platform-browser-dynamic": "~8.2.0",
     "@angular/router": "~8.2.0",
     "async-mutex": "^0.1.4",
-    "oidc-client": "github:gastate/oidc-client-js#release",
+    "oidc-client": "^1.10.1",
     "querystring": "^0.2.0",
     "rxjs": "~6.4.0",
     "tslib": "^1.10.0",
