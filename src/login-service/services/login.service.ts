@@ -1,24 +1,26 @@
-import { UserManager, User } from "oidc-client";
+import { UserManager, User, UserManagerSettings, UserManagerEvents } from "oidc-client";
 import { Subscription, Subject } from "rxjs";
-import * as querystring from 'querystring';
 
 import { Mutex } from "async-mutex";
 
-import { LoginConfig } from "../models/login-config.model";
-
 import { ModeService } from "../services/mode.service";
-import { Capture } from "../lib/capture/capture.lib";
-
-export interface AuthResponse {
-    authList: any[];
-}
 
 export class LoginService {
-  private className: string = "LoginService";
+  static get DefaultUserManagerSettings(): UserManagerSettings {
+    return {
+      scope: 'openid profile gsupersonpantherid pantherCash',
+      response_type: 'id_token token',
+      automaticSilentRenew: true,
+      monitorSession: false,
+      filterProtocolClaims: false,
+      loadUserInfo: false,
+      revokeAccessTokenOnSignout: true,
+      silentRequestTimeout: 11000
+    };
+  }
 
   private mgr: UserManager;
   private currentUser: User;
-  private auths: string[];
 
   private privateLock: Mutex = new Mutex();    // lock in (private) methods that set currentUser: clearAuth and onUserLoaded
   private publicLock: Mutex = new Mutex(); // lock in PUBLIC methods: constructor, getCurrentUser, getUserOrLogin, logOut -- ONLY INSIDE awaitInit
@@ -27,25 +29,18 @@ export class LoginService {
   private userLoadedEvents: Subject<User> = new Subject<User>(); // userEvents filtered to emit only Users
   private userErrorEvents: Subject<Error> = new Subject<Error>(); // userEvents filtered to emit only Errors
 
-  private loginConfig: LoginConfig;
+  private loginConfig: UserManagerSettings;
 
   private initializeEvent: () => void;
   private awaitInit: Promise<void>;
-  private userLoadedCapture: Capture<User | Error> = new Capture<User | Error>(this.userEvents, this.privateLock);
 
   public modeService: ModeService;
+  public get events(): UserManagerEvents | undefined { return this?.mgr.events; }
   public get isInitialized(): boolean { return !!this.mgr; }
   public get hasUser(): boolean { return !!this.currentUser; }
-  public get hasAuthorizations(): boolean { return !!this.auths; }
   public get userObject(): User | undefined { return this.currentUser; }
-  public get oldState(): string { return this.currentUser && this.currentUser.state; } // TODO: elvisize
-  public get userID(): string { return this.currentUser && this.currentUser.profile.gsupersonpantherid; } // TODO: elvisize
-  public get userName(): string { return this.currentUser && this.currentUser.profile.user_name; } // TODO: elvisize
-  public get email(): string { return this.currentUser && this.currentUser.profile.email; } // TODO: elvisize
-  public get realName(): string { return this.currentUser && this.currentUser.profile.name; } // TODO: elvisize
-  public get givenName(): string { return this.currentUser && this.currentUser.profile.given_name; } // TODO: elvisize
-  public get familyName(): string { return this.currentUser && this.currentUser.profile.family_name; } // TODO: elvisize
-  public get bearerToken(): string | undefined { return this.currentUser && this.currentUser.access_token; } // TODO: elvisize
+  public get oldState(): string { return this?.currentUser?.state; }
+  public get bearerToken(): string | undefined { return this?.currentUser?.access_token; }
   public get headers(): { [key: string]: string } | undefined {
     if (this.currentUser) {
       return {
@@ -67,14 +62,14 @@ export class LoginService {
     });
   }
 
-  public initialize(loginConfig: LoginConfig, allowredirect?: boolean, stateinfo?: string | undefined): Promise<void> {
+  public initialize(loginConfig: LoginConfig): Promise<void> {
     if (!this.loginConfig) {
-      this.loginConfig = loginConfig; // technically, this should be inside a lock
+      this.loginConfig = Object.assign({}, LoginService.DefaultUserManagerSettings, loginConfig);
       this.mgr = new UserManager(this.loginConfig);
-      this.initializeEvent();
       this.mgr.events.addUserLoaded((user: User) => this.onUserLoaded(user));
       this.mgr.events.addAccessTokenExpired(() => this.onUserUnloaded("UserManager emitted AccessTokenExpired"));
       this.mgr.events.addUserUnloaded(() => this.onUserUnloaded("UserManager emitted UserUnloaded"));
+      this.initializeEvent();
       return this.processMode();
     } else if (loginConfig === this.loginConfig) {
       return Promise.resolve();
@@ -83,24 +78,23 @@ export class LoginService {
     }
   }
 
-  
-  private processMode(allowredirect: boolean = false, stateinfo?: string | undefined) {
+  private processMode() {
     return this.doSafeUserAction(this.publicLock, () => {
       switch (this.modeService.mode) {
-        case "embedded":  // getOrRecover
-          return this.getOrRecoverUser();
         case "silent":  // Process silent redirect, no fallback
-          return this.captureAndCallback(() => this.mgr.signinSilentCallback(this.modeService.login_query));
+          return this.doSafeUserAction(this.privateLock, () => this.mgr.signinSilentCallback(this.modeService.login_query));
         case "login":  // Process login redirect, fallback on recovery
-          return this.captureAndCallback(() => this.mgr.signinRedirectCallback(this.modeService.login_query), () => this.logInSilent());
+          return this.doSafeUserAction(this.privateLock, () => this.mgr.signinRedirectCallback(this.modeService.login_query)).catch(() => this.logInSilent());
+        case "embedded":  // getOrRecover
         case "normal":
-          return allowredirect ? this.recoverUserOrLogin(stateinfo) : this.getOrRecoverUser();
+          return this.getOrRecoverUser();
       }
-    }).catch(() => { });
+    })
+      .catch(e => console.log(e))
+      .then(() => { });
   }
-
-  // public subscribe(subscriber: (value: User) => void): Subscription { return this.userLoadedEvents.subscribe(subscriber); }
-  // public subscribeAll(subscriber: (value: User | Error) => void): Subscription { return this.userEvents.subscribe(subscriber); }
+  public subscribe(subscriber: (value: User) => void): Subscription { return this.userLoadedEvents.subscribe(subscriber); }
+  public subscribeAll(subscriber: (value: User | Error) => void): Subscription { return this.userEvents.subscribe(subscriber); }
 
   private clearAuth(): Promise<void> {
     return this.doSafeUserAction(this.privateLock, () => {
@@ -135,12 +129,11 @@ export class LoginService {
   }
 
   private recoverUserOrLogin(stateinfo?: string | undefined): Promise<User> {
-    let fn: string = this.modeService.depth + ">" + this.className + "#recoverUserOrLogin";
     return this.recoverUser()
-      .then(() => this.getUserOrFail((fn + ": User recovered to " + this.currentUser)))
+      .then(() => this.getUserOrFail(("User recovered to " + this.currentUser)))
       .catch((err: any) => {
         return this.logInInteractive(stateinfo)
-          .then(() => this.getUserOrFail((fn + ": Interactive login resolved to " + this.currentUser)));
+          .then(() => this.getUserOrFail(("Interactive login resolved to " + this.currentUser)));
       });
   }
 
@@ -149,47 +142,44 @@ export class LoginService {
   }
 
   private recoverUser(): Promise<User> {
-    let fn: string = this.modeService.depth + ">" + this.className + "#recoverUser";
     return this.logInSilent()
-      .then(() => this.getUserOrFail((fn + ": Silent login resolved to " + this.currentUser)));
+      .then(() => this.getUserOrFail(("Silent login resolved to " + this.currentUser)));
   }
 
   private logInInteractive(stateinfo?: string | undefined): Promise<User> {
-    let fn: string = this.modeService.depth + ">" + this.className + "#logInInteractive";
     if (this.modeService.embedded)
       return Promise.reject("This frame was unable to find your login session.");
 
     return this.logInRedirect(stateinfo)
-      .then(() => this.getUserOrFail((fn + ": Redirect login resolved to " + this.currentUser)));
+      .then(() => this.getUserOrFail(("Redirect login resolved to " + this.currentUser)));
   }
 
-  private logInRedirect(stateinfo?: string | undefined): Promise<User> {
-    let fn: string = this.modeService.depth + ">" + this.className + "#logInRedirect";
+  private logInRedirect(stateinfo?: string | undefined): Promise<User | void> {
     let stateobj: any = stateinfo ? { state: stateinfo } : undefined; // TODO: don't use type any
+    if (this.modeService.embedded)
+      return Promise.reject("This frame was unable to find your login session.");
 
-    return this.captureAndCallback(
-      () => this.mgr.signinRedirect(stateobj)
-      , undefined
-      , () => this.getUserOrFail((fn + ": Redirect login resolved to " + this.currentUser))
-    );
+    return this.doSafeUserAction(this.privateLock, () => this.mgr.signinRedirect(stateobj))
+      .catch(() => this.getUserOrFail("Redirect login resolved to " + this.currentUser));
   }
 
   private logInSilent(): Promise<User> {
-    let fn: string = this.modeService.depth + ">" + this.className + "#logInSilent";
+    if (this.modeService.silent)
+      return Promise.reject("recursive silent login requested in silent mode.");
 
-    return this.captureAndCallback(
-      () => this.mgr.signinSilent()
-      , undefined
-      , () => this.getUserOrFail((fn + ": Silent login resolved to " + this.currentUser))
-    );
+    return this.doSafeUserAction(this.privateLock, () => this.mgr.signinSilent())
+      .catch(() => this.getUserOrFail("Silent login resolved to " + this.currentUser));
   }
 
   public logOut(): Promise<void> {
-    return this.doSafeUserAction(this.publicLock, () => this.mgr.signoutRedirect().then(() => this.clearAuth()));
+    if (this.modeService.embedded) {
+      return Promise.reject("You must log out of the whole page, not just this frame.");
+    } else {
+      return this.doSafeUserAction(this.publicLock, () => this.mgr.signoutRedirect().then(() => this.clearAuth()));
+    }
   }
 
   private onUserLoaded(user: User): void {
-    let fn: string = this.modeService.depth + ">" + this.className + "#onUserLoaded";
     if (!user) {
       this.userEvents.next(new Error("Invalid user (false) = " + JSON.stringify(user)));
     } else if (user.expired) {
@@ -199,39 +189,23 @@ export class LoginService {
         this.currentUser = user;
         this.userEvents.next(user);
       }).catch((err: Error) => {
-        err.message = fn + ": Failed while or after acquiring userLock -- " + err.message;
+        err.message = "Failed while or after acquiring userLock -- " + err.message;
         this.userEvents.next(err);
       });
     }
   }
 
   private onUserUnloaded(from: string): void {
-    let fn: string = this.modeService.depth + ">" + this.className + "#onUserUnloaded";
     this.doSafeUserAction(this.privateLock, () => {
       if (this.currentUser) {
-        delete this.auths;
         delete this.currentUser;
         this.userEvents.next(undefined);
       }
+
     }).catch((err: Error) => {
-      err.message = fn + ": Failed while or after acquiring userLock -- " + err.message;
+      err.message = "Failed while or after acquiring userLock -- " + err.message;
       this.userEvents.next(err);
     });
-  }
-
-  private async captureAndCallback(userManagerCallback: () => Promise<User>, catchCallback?: () => Promise<any>, capturedCallback?: () => Promise<any>) {
-    await this.awaitInit;
-    const captured = (await this.userLoadedCapture.start());
-    try {
-      await userManagerCallback();
-      await captured.toPromise();
-      if (capturedCallback)
-        await capturedCallback();
-    } catch (error) {
-      captured.release();
-      if (catchCallback)
-        return catchCallback();
-    }
   }
 
   private async doSafeUserAction<T>(lock: Mutex, action: () => T): Promise<PromiseReturn<T>> {
@@ -249,3 +223,13 @@ export class LoginService {
 }
 
 type PromiseReturn<T> = T extends Promise<infer U> ? U : T;
+export interface RequiredUserSettings {
+  authority: string;
+  client_id: string;
+  redirect_uri: string;
+  silent_redirect_uri: string;
+  popup_redirect_uri: string;
+  post_logout_redirect_uri: string;
+}
+
+export type LoginConfig = RequiredUserSettings & UserManagerSettings;

@@ -1,11 +1,10 @@
-import * as querystring from 'querystring'; // see https://nodejs.org/api/querystring.html#querystring_querystring_parse_str_sep_eq_options
+const querystring = require("querystring"); // see https://nodejs.org/api/querystring.html#querystring_querystring_parse_str_sep_eq_options
 
 export class ModeService {
     private initial_href: string; // original href before angular strips query and rewrites fragment
     private query_string: string; // query string from original href
     private _query: any; // query decoded from original href
     private query_used: any; // query parameter keys used within modeService
-    private query_unused: any; // query parameter keys not used within modeService
     private query_login: string; // login-related items from query string
     private baseUrl: string; // original href with fragment and query removed
     private fragment: string; // fragment from original href
@@ -17,30 +16,16 @@ export class ModeService {
     private _silent: boolean = false;  // silent mode - callback from silent login
     private _login: "NONE" | "INFO" | "STATUS" | "FAILED";   // not actually a mode - indicates login query was given
     private _iframe: boolean = false;  // not actually a mode - indicates page is loaded in an iframe
-    private _depth: number = NaN;  // iframe nesting level
     private _mode: string; // general mode of this invocation
 
     constructor() {
         this.initial_href = window.location.href; // TODO: change back to injecting this as soon as that's supported by `ionic build --prod`
         this._iframe = (parent !== window);
-        if (!this._iframe) {
-            this._depth = 0;
-        } else {
-            let depth: number = 0;
-            let next: any = window;
-            while (next.parent !== next) {
-                next = next.parent;
-                depth += 1;
-            }
-            this._depth = depth;
-        }
-
         this._dissect_initial_href();
         this._detect_silent();
         this._detect_embedded();
         this._detect_login();
         this._set_mode();
-        this._query_unused();
         this._generate_href();
         this._reload();
     }
@@ -58,7 +43,6 @@ export class ModeService {
             this.query_string = this.initial_href.slice(query_start, query_end);
             this._query = querystring.parse(this.query_string);
             this.query_used = {};
-            this.query_unused = {};
         }
         if (fragment_delimiter > -1) {
             let fragment_start = fragment_delimiter + 1;
@@ -158,19 +142,6 @@ export class ModeService {
         }
     }
 
-    private _query_unused() {
-        if (this._query) {
-            let unused: any = {};
-            for (let key in this._query) {
-                if (!this.query_used[key]) {
-                    let value: string = this._query[key];
-                    unused[key] = value;
-                }
-            }
-            this.query_unused = unused;
-        }
-    }
-
     private _generate_href() {
         let url: string = this.baseUrl;
         let minQuery: any;
@@ -208,26 +179,12 @@ export class ModeService {
     get url(): string { return this.fullUrl; }
     get url_segment(): string { return this.segment; }
     get login_query(): string { return this.query_login; }
-    get depth(): number { return this._depth; }
     get mode(): string { return this._mode; }
 
     public query(key: string): string | undefined {
         let value: string | undefined;
         if (this._query) { value = this._query[key]; }
         return value;
-    }
-
-    public static get depth(): number {
-        let depth: number = 0;
-        let in_iframe = (parent !== window);
-        if (in_iframe) {
-            let next: Window = window;
-            while (next.parent !== next) {
-                next = next.parent;
-                depth += 1;
-            }
-        }
-        return depth;
     }
 
 }
